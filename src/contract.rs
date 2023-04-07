@@ -1,11 +1,17 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
+use cosmwasm_std::{
+    coins, to_binary, Addr, BankMsg, Binary, CosmosMsg, Deps, DepsMut, Env, MessageInfo, Order,
+    Response, StdResult, WasmMsg,
+};
 use cw2::set_contract_version;
+use cw20::Cw20ExecuteMsg;
 
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
-use crate::state::{add_deposit, Asset, AssetType, Deposit, FeeConfig, Offer, FEE_CONFIG};
+use crate::state::{
+    add_deposit, Asset, AssetType, Deposit, FeeConfig, Offer, DEPOSITS, FEE_CONFIG, ID,
+};
 
 // version info for migration info
 const CONTRACT_NAME: &str = "crates.io:over-the-counter";
@@ -42,6 +48,7 @@ pub fn execute(
 ) -> Result<Response, ContractError> {
     match msg {
         ExecuteMsg::Deposit { exchange, from } => execute::deposit(deps, info, exchange, from),
+        ExecuteMsg::Withdraw { id } => execute::withdraw(deps, info.sender, id),
         _ => unimplemented!(),
     }
 }
@@ -85,6 +92,55 @@ mod execute {
             .add_attribute("sender", info.sender.to_string())
             .add_attribute("deposit", info.funds[0].to_string())
             .add_attribute("exchange", exchange.to_string()))
+    }
+
+    pub fn withdraw(
+        deps: DepsMut,
+        sender: Addr,
+        deposit_id: Option<ID>,
+    ) -> Result<Response, ContractError> {
+        let keys_to_remove = if let Some(id) = deposit_id {
+            // If ID is provided, remove only the entry with the provided address and ID
+            let deposit = DEPOSITS.load(deps.storage, (&sender, id))?.deposit;
+            vec![((&sender, id), deposit)]
+        } else {
+            // If ID is not provided, remove all entries with the provided address prefix
+            DEPOSITS
+                .prefix(&sender)
+                .range(deps.storage, None, None, Order::Ascending)
+                .map(|item| {
+                    let (id, deposit) = item?;
+                    Ok(((&sender, id), deposit.deposit))
+                })
+                .collect::<StdResult<Vec<((&Addr, ID), Asset)>>>()?
+        };
+
+        let mut msgs = vec![];
+        for (key, deposit) in keys_to_remove {
+            DEPOSITS.remove(deps.storage, key);
+            let msg: CosmosMsg = match deposit.denom {
+                AssetType::Native(denom) => BankMsg::Send {
+                    to_address: sender.to_string(),
+                    amount: coins(deposit.amount.u128(), denom),
+                }
+                .into(),
+                AssetType::Cw20(denom) => WasmMsg::Execute {
+                    contract_addr: denom.to_string(),
+                    msg: to_binary(&Cw20ExecuteMsg::Transfer {
+                        recipient: sender.to_string(),
+                        amount: deposit.amount,
+                    })?,
+                    funds: vec![],
+                }
+                .into(),
+            };
+            msgs.push(msg);
+        }
+
+        Ok(Response::new()
+            .add_messages(msgs)
+            .add_attribute("action", "withdraw")
+            .add_attribute("sender", sender.to_string()))
     }
 }
 

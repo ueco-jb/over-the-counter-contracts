@@ -59,6 +59,28 @@ pub fn add_deposit(storage: &mut dyn Storage, sender: &Addr, deposit: &Deposit) 
     DEPOSITS.save(storage, (sender, id), &deposit)
 }
 
+pub fn remove_deposit(storage: &mut dyn Storage, address: &Addr, id: Option<ID>) -> StdResult<()> {
+    let keys_to_remove = if let Some(id) = id {
+        // If ID is provided, remove only the entry with the provided address and ID
+        vec![(address, id)]
+    } else {
+        // If ID is not provided, remove all entries with the provided address prefix
+        DEPOSITS
+            .prefix(address)
+            .range(storage, None, None, Order::Ascending)
+            .map(|item| {
+                let (id, _) = item?;
+                Ok((address, id))
+            })
+            .collect::<StdResult<Vec<(&Addr, ID)>>>()?
+    };
+
+    for key in keys_to_remove {
+        DEPOSITS.remove(storage, key);
+    }
+    Ok(())
+}
+
 pub fn get_deposits(storage: &dyn Storage, address: &Addr) -> StdResult<Vec<Deposit>> {
     DEPOSITS
         .prefix(address)
