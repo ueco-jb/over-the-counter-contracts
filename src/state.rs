@@ -2,6 +2,8 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Decimal, Order, StdResult, Storage, Uint128};
 use cw_storage_plus::{Item, Map};
 
+use std::fmt;
+
 #[cw_serde]
 pub enum AssetType {
     Native(String),
@@ -10,8 +12,22 @@ pub enum AssetType {
 
 #[cw_serde]
 pub struct Asset {
-    denom: AssetType,
-    amount: Uint128,
+    pub denom: AssetType,
+    pub amount: Uint128,
+}
+
+impl fmt::Display for Asset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}{}",
+            self.amount,
+            match &self.denom {
+                AssetType::Native(symbol) => symbol.to_string(),
+                AssetType::Cw20(address) => format!(":{}", address),
+            }
+        )
+    }
 }
 
 #[cw_serde]
