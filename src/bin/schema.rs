@@ -1,6 +1,6 @@
 use cosmwasm_schema::write_api;
 
-use over_the_counter_contracts::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
+use over_the_counter::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
 
 fn main() {
     write_api! {

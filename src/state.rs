@@ -56,8 +56,8 @@ pub fn get_deposits(storage: &dyn Storage, address: &Addr) -> StdResult<Vec<Depo
 
 #[cw_serde]
 pub struct FeeConfig {
-    pub fee_address: String,
-    pub optional_service_fee: Decimal,
+    pub fee_address: Addr,
+    pub service_fee: Decimal,
 }
 
 pub const FEE_CONFIG: Item<FeeConfig> = Item::new("fee_config");

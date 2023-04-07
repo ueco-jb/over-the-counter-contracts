@@ -1,25 +1,36 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
-// use cw2::set_contract_version;
+use cw2::set_contract_version;
 
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
+use crate::state::{FeeConfig, FEE_CONFIG};
 
-/*
 // version info for migration info
-const CONTRACT_NAME: &str = "crates.io:over-the-counter-contracts";
+const CONTRACT_NAME: &str = "crates.io:over-the-counter";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
-*/
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
-    _deps: DepsMut,
+    deps: DepsMut,
     _env: Env,
     _info: MessageInfo,
-    _msg: InstantiateMsg,
+    msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
-    unimplemented!()
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+
+    FEE_CONFIG.save(
+        deps.storage,
+        &FeeConfig {
+            fee_address: deps.api.addr_validate(&msg.fee_address)?,
+            service_fee: msg.optional_service_fee,
+        },
+    )?;
+
+    Ok(Response::new()
+        .add_attribute("instantiate", "over-the-counter")
+        .add_attribute("fee-address", msg.fee_address.to_string()))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]

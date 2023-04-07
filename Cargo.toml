@@ -1,5 +1,5 @@
 [package]
-name = "over-the-counter-contracts"
+name = "over-the-counter"
 version = "0.1.0"
 authors = ["Jakub <jakub@moonbite.space>"]
 edition = "2021"
