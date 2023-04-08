@@ -36,10 +36,11 @@ pub enum QueryMsg {
 
 #[cw_serde]
 pub struct DepositsBySenderResponse {
-    deposits: Vec<(ID, Deposit)>,
+    pub deposits: Vec<(ID, Deposit)>,
 }
 
 #[cw_serde]
 pub struct DepositByIdResponse {
-    deposit: Deposit,
+    pub sender: String,
+    pub deposit: Deposit,
 }

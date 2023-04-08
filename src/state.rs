@@ -81,15 +81,15 @@ pub fn remove_deposit(storage: &mut dyn Storage, address: &Addr, id: Option<ID>)
     Ok(())
 }
 
-pub fn get_deposits(storage: &dyn Storage, address: &Addr) -> StdResult<Vec<Deposit>> {
+pub fn get_deposits(storage: &dyn Storage, address: &Addr) -> StdResult<Vec<(ID, Deposit)>> {
     DEPOSITS
         .prefix(address)
         .range(storage, None, None, Order::Ascending)
         .map(|deposit| {
-            let (_, deposit) = deposit?;
-            Ok(deposit)
+            let (id, deposit) = deposit?;
+            Ok((id, deposit))
         })
-        .collect::<StdResult<Vec<Deposit>>>()
+        .collect::<StdResult<Vec<(ID, Deposit)>>>()
 }
 
 #[cw_serde]

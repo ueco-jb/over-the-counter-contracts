@@ -145,8 +145,65 @@ mod execute {
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn query(_deps: Deps, _env: Env, _msg: QueryMsg) -> StdResult<Binary> {
-    unimplemented!()
+pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
+    match msg {
+        QueryMsg::DepositsBySender { address } => {
+            to_binary(&query::deposits_by_sender(deps, address)?)
+        }
+        QueryMsg::DepositById { id } => to_binary(&query::deposit_by_id(deps, id)?),
+    }
+}
+
+mod query {
+    use cosmwasm_std::StdError;
+
+    use crate::msg::{DepositByIdResponse, DepositsBySenderResponse};
+    use crate::state::get_deposits;
+
+    use super::*;
+
+    pub fn deposits_by_sender(deps: Deps, address: String) -> StdResult<DepositsBySenderResponse> {
+        let address = deps.api.addr_validate(&address)?;
+        Ok(DepositsBySenderResponse {
+            deposits: get_deposits(deps.storage, &address)?,
+        })
+    }
+
+    pub fn deposit_by_id(deps: Deps, search_id: ID) -> StdResult<DepositByIdResponse> {
+        let deposit = DEPOSITS
+            .range(deps.storage, None, None, Order::Ascending)
+            .filter_map(|item| match item {
+                Ok(((sender, id), deposit)) => {
+                    if id == search_id {
+                        Some(Ok((sender, deposit)))
+                    } else {
+                        None
+                    }
+                }
+                Err(e) => Some(Err(e.into())),
+            })
+            .collect::<StdResult<Vec<(Addr, Deposit)>>>()?;
+
+        if deposit.is_empty() {
+            return Err(StdError::GenericErr {
+                msg: format!("No deposit with given ID was found: {}", search_id),
+            });
+        }
+        if deposit.len() != 1 {
+            return Err(StdError::GenericErr {
+                msg: format!(
+                    "Something went wrong; More then 1 deposit with searched ID: {}",
+                    search_id
+                ),
+            })
+            .into();
+        }
+
+        Ok(DepositByIdResponse {
+            sender: deposit[0].0.to_string(),
+            deposit: deposit[0].1.clone(),
+        })
+    }
 }
 
 #[cfg(test)]
