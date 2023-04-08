@@ -16,6 +16,22 @@ pub struct Asset {
     pub amount: Uint128,
 }
 
+impl Asset {
+    pub fn new_native(amount: u128, denom: &str) -> Self {
+        Self {
+            amount: amount.into(),
+            denom: AssetType::Native(denom.to_owned()),
+        }
+    }
+
+    pub fn new_cw20(amount: u128, denom: &str) -> Self {
+        Self {
+            amount: amount.into(),
+            denom: AssetType::Cw20(denom.to_owned()),
+        }
+    }
+}
+
 impl fmt::Display for Asset {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -56,7 +72,7 @@ pub const DEPOSITS: Map<(&Addr, ID), Deposit> = Map::new("deposits");
 
 pub fn add_deposit(storage: &mut dyn Storage, sender: &Addr, deposit: &Deposit) -> StdResult<()> {
     let id = next_id(storage)?;
-    DEPOSITS.save(storage, (sender, id), &deposit)
+    DEPOSITS.save(storage, (sender, id), deposit)
 }
 
 pub fn remove_deposit(storage: &mut dyn Storage, address: &Addr, id: Option<ID>) -> StdResult<()> {

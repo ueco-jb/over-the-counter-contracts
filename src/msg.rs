@@ -1,5 +1,5 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::Decimal;
+use cosmwasm_std::{Addr, Decimal};
 
 use crate::state::{Asset, Deposit, ID};
 
@@ -41,6 +41,6 @@ pub struct DepositsBySenderResponse {
 
 #[cw_serde]
 pub struct DepositByIdResponse {
-    pub sender: String,
+    pub sender: Addr,
     pub deposit: Deposit,
 }

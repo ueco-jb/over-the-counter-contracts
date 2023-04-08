@@ -8,7 +8,7 @@ use cw2::set_contract_version;
 use cw20::Cw20ExecuteMsg;
 
 use crate::error::ContractError;
-use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
+use crate::msg::{DepositByIdResponse, ExecuteMsg, InstantiateMsg, QueryMsg};
 use crate::state::{
     add_deposit, Asset, AssetType, Deposit, FeeConfig, Offer, DEPOSITS, FEE_CONFIG, ID,
 };
@@ -36,7 +36,7 @@ pub fn instantiate(
 
     Ok(Response::new()
         .add_attribute("instantiate", "over-the-counter")
-        .add_attribute("fee-address", msg.fee_address.to_string()))
+        .add_attribute("fee-address", msg.fee_address))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -49,7 +49,9 @@ pub fn execute(
     match msg {
         ExecuteMsg::Deposit { exchange, from } => execute::deposit(deps, info, exchange, from),
         ExecuteMsg::Withdraw { id } => execute::withdraw(deps, info.sender, id),
-        _ => unimplemented!(),
+        ExecuteMsg::AcceptExchange { deposit_id } => {
+            execute::accept_exchange(deps, info, deposit_id)
+        }
     }
 }
 
@@ -72,7 +74,7 @@ mod execute {
             .funds
             .first()
             .cloned()
-            .ok_or_else(|| ContractError::NoFundsWithDeposit {})?;
+            .ok_or(ContractError::NoFundsWithDeposit {})?;
 
         let deposit = Deposit {
             deposit: Asset {
@@ -142,6 +144,109 @@ mod execute {
             .add_attribute("action", "withdraw")
             .add_attribute("sender", sender.to_string()))
     }
+
+    pub fn accept_exchange(
+        deps: DepsMut,
+        info: MessageInfo,
+        deposit_id: ID,
+    ) -> Result<Response, ContractError> {
+        let DepositByIdResponse {
+            sender: deposit_sender,
+            deposit,
+        } = query::deposit_by_id(deps.as_ref(), deposit_id)?;
+
+        let funds = info
+            .funds
+            .first()
+            .cloned()
+            .ok_or(ContractError::NoNativeForExchange {})?;
+
+        let exchange_messages = match deposit.offer.exchange.denom.clone() {
+            AssetType::Native(denom) => {
+                if funds.denom == denom {
+                    if funds.amount == deposit.offer.exchange.amount {
+                        // Create two messages
+                        // First sends newly sent native funds to the depositor,
+                        // second sends original deposit to user that accepted the exchange
+                        create_exchange_messages(
+                            &deposit_sender,
+                            &Asset::new_native(funds.amount.into(), &funds.denom),
+                            &info.sender,
+                            &deposit.deposit,
+                        )?
+                    } else {
+                        // User sent incorrect amount of native tokens to accept the exchange
+                        return Err(ContractError::ExchangeIncorrectAmount {
+                            expected_amount: deposit.offer.exchange.amount,
+                            provided_amount: funds.amount,
+                        });
+                    }
+                } else {
+                    // User sent incorrect native token to the exchange
+                    return Err(ContractError::ExchangeIncorrectNative {
+                        expected: denom,
+                        received: funds.denom,
+                    });
+                }
+            }
+            // User send native tokens to accept an exchange which expected CW20 token
+            AssetType::Cw20(expected) => {
+                return Err(ContractError::NativeTokenInsteadOfCw20 {
+                    expected,
+                    received: funds.denom,
+                });
+            }
+        };
+
+        Ok(Response::new()
+            .add_messages(exchange_messages)
+            .add_attribute("exchange", "completed")
+            .add_attribute("deposit-sender", deposit_sender.to_string())
+            .add_attribute("original-deposit", deposit.deposit.to_string())
+            .add_attribute("expected", deposit.offer.exchange.to_string())
+            .add_attribute("accepted-by", info.sender.to_string()))
+    }
+
+    pub fn create_exchange_messages(
+        first_party: &Addr,
+        first_asset: &Asset,
+        second_party: &Addr,
+        second_asset: &Asset,
+    ) -> StdResult<Vec<CosmosMsg>> {
+        let first_message: CosmosMsg = match first_asset.denom.clone() {
+            AssetType::Native(denom) => BankMsg::Send {
+                to_address: first_party.to_string(),
+                amount: coins(first_asset.amount.u128(), denom),
+            }
+            .into(),
+            AssetType::Cw20(denom) => WasmMsg::Execute {
+                contract_addr: denom,
+                msg: to_binary(&Cw20ExecuteMsg::Transfer {
+                    recipient: first_party.to_string(),
+                    amount: first_asset.amount,
+                })?,
+                funds: vec![],
+            }
+            .into(),
+        };
+        let second_message: CosmosMsg = match second_asset.denom.clone() {
+            AssetType::Native(denom) => BankMsg::Send {
+                to_address: second_party.to_string(),
+                amount: coins(second_asset.amount.u128(), denom),
+            }
+            .into(),
+            AssetType::Cw20(denom) => WasmMsg::Execute {
+                contract_addr: denom,
+                msg: to_binary(&Cw20ExecuteMsg::Transfer {
+                    recipient: second_party.to_string(),
+                    amount: second_asset.amount,
+                })?,
+                funds: vec![],
+            }
+            .into(),
+        };
+        Ok(vec![first_message, second_message])
+    }
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -180,7 +285,7 @@ mod query {
                         None
                     }
                 }
-                Err(e) => Some(Err(e.into())),
+                Err(e) => Some(Err(e)),
             })
             .collect::<StdResult<Vec<(Addr, Deposit)>>>()?;
 
@@ -195,16 +300,110 @@ mod query {
                     "Something went wrong; More then 1 deposit with searched ID: {}",
                     search_id
                 ),
-            })
-            .into();
+            });
         }
 
         Ok(DepositByIdResponse {
-            sender: deposit[0].0.to_string(),
+            sender: deposit[0].0.clone(),
             deposit: deposit[0].1.clone(),
         })
     }
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::*;
+
+    use cosmwasm_std::CosmosMsg;
+
+    #[test]
+    fn exchange_messages() {
+        let deposit = (
+            Addr::unchecked("first"),
+            Asset::new_native(100_000u128, "ujuno"),
+        );
+        let exchange = (
+            Addr::unchecked("second"),
+            Asset::new_native(200_000u128, "uusdc"),
+        );
+
+        let exchanges =
+            execute::create_exchange_messages(&deposit.0, &exchange.1, &exchange.0, &deposit.1)
+                .unwrap();
+
+        assert_eq!(
+            exchanges,
+            vec![
+                CosmosMsg::Bank(BankMsg::Send {
+                    to_address: "first".to_owned(),
+                    amount: coins(200_000u128, "uusdc")
+                }),
+                CosmosMsg::Bank(BankMsg::Send {
+                    to_address: "second".to_owned(),
+                    amount: coins(100_000u128, "ujuno")
+                })
+            ]
+        );
+
+        let exchange = (
+            Addr::unchecked("second"),
+            Asset::new_cw20(200_000u128, "tokenaddress"),
+        );
+
+        let exchanges =
+            execute::create_exchange_messages(&deposit.0, &exchange.1, &exchange.0, &deposit.1)
+                .unwrap();
+
+        assert_eq!(
+            exchanges,
+            vec![
+                CosmosMsg::Wasm(WasmMsg::Execute {
+                    contract_addr: "tokenaddress".to_owned(),
+                    msg: to_binary(&Cw20ExecuteMsg::Transfer {
+                        recipient: "first".to_owned(),
+                        amount: 200_000u128.into()
+                    })
+                    .unwrap(),
+                    funds: vec![]
+                }),
+                CosmosMsg::Bank(BankMsg::Send {
+                    to_address: "second".to_owned(),
+                    amount: coins(100_000u128, "ujuno")
+                })
+            ]
+        );
+
+        let deposit = (
+            Addr::unchecked("first"),
+            Asset::new_cw20(100_000u128, "othertoken"),
+        );
+
+        let exchanges =
+            execute::create_exchange_messages(&deposit.0, &exchange.1, &exchange.0, &deposit.1)
+                .unwrap();
+
+        assert_eq!(
+            exchanges,
+            vec![
+                CosmosMsg::Wasm(WasmMsg::Execute {
+                    contract_addr: "tokenaddress".to_owned(),
+                    msg: to_binary(&Cw20ExecuteMsg::Transfer {
+                        recipient: "first".to_owned(),
+                        amount: 200_000u128.into()
+                    })
+                    .unwrap(),
+                    funds: vec![]
+                }),
+                CosmosMsg::Wasm(WasmMsg::Execute {
+                    contract_addr: "othertoken".to_owned(),
+                    msg: to_binary(&Cw20ExecuteMsg::Transfer {
+                        recipient: "second".to_owned(),
+                        amount: 100_000u128.into()
+                    })
+                    .unwrap(),
+                    funds: vec![]
+                }),
+            ]
+        );
+    }
+}
