@@ -1,5 +1,6 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Decimal};
+use cw20::Cw20ReceiveMsg;
 
 use crate::state::{Asset, Deposit, ID};
 
@@ -11,14 +12,34 @@ pub struct InstantiateMsg {
 
 #[cw_serde]
 pub enum ExecuteMsg {
+    // Receive CW20 message for deposit of exchange acceptance
+    Receive(Cw20ReceiveMsg),
     /// Deposit native tokens with an offer
     Deposit {
+        // What user expects in return
         exchange: Asset,
+        // Accept offer only from this address
         from: Option<String>,
     },
     /// Withdraw a deposit
     /// If no ID specified, all sender's deposits will be withdrawn
-    Withdraw { id: Option<ID> },
+    Withdraw {
+        id: Option<ID>,
+    },
+    /// Accepts exchange offer of given ID, executing the transaction
+    AcceptExchange {
+        deposit_id: ID,
+    },
+}
+
+#[cw_serde]
+pub enum ReceiveCw20Msg {
+    Deposit {
+        // What user expects in return
+        exchange: Asset,
+        // Accept offer only from this address
+        from: Option<String>,
+    },
     /// Accepts exchange offer of given ID, executing the transaction
     AcceptExchange { deposit_id: ID },
 }

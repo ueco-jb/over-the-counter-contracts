@@ -1,14 +1,14 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    coins, to_binary, Addr, BankMsg, Binary, CosmosMsg, Deps, DepsMut, Env, MessageInfo, Order,
-    Response, StdResult, WasmMsg,
+    coins, from_binary, to_binary, Addr, BankMsg, Binary, CosmosMsg, Deps, DepsMut, Env,
+    MessageInfo, Order, Response, StdResult, WasmMsg,
 };
 use cw2::set_contract_version;
-use cw20::Cw20ExecuteMsg;
+use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
 
 use crate::error::ContractError;
-use crate::msg::{DepositByIdResponse, ExecuteMsg, InstantiateMsg, QueryMsg};
+use crate::msg::{DepositByIdResponse, ExecuteMsg, InstantiateMsg, QueryMsg, ReceiveCw20Msg};
 use crate::state::{
     add_deposit, Asset, AssetType, Deposit, FeeConfig, Offer, DEPOSITS, FEE_CONFIG, ID,
 };
@@ -47,11 +47,43 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response, ContractError> {
     match msg {
-        ExecuteMsg::Deposit { exchange, from } => execute::deposit(deps, info, exchange, from),
+        ExecuteMsg::Receive(cw20_msg) => receive_cw20(deps, info, cw20_msg),
+        ExecuteMsg::Deposit { exchange, from } => {
+            let funds = info
+                .funds
+                .first()
+                .cloned()
+                .ok_or(ContractError::NoFundsWithDeposit {})?;
+            execute::deposit(
+                deps,
+                info.sender,
+                Asset::new_native(funds.amount.u128(), &funds.denom),
+                exchange,
+                from,
+            )
+        }
         ExecuteMsg::Withdraw { id } => execute::withdraw(deps, info.sender, id),
         ExecuteMsg::AcceptExchange { deposit_id } => {
             execute::accept_exchange(deps, info, deposit_id)
         }
+    }
+}
+
+pub fn receive_cw20(
+    deps: DepsMut,
+    info: MessageInfo,
+    cw20_msg: Cw20ReceiveMsg,
+) -> Result<Response, ContractError> {
+    let sender = deps.api.addr_validate(&cw20_msg.sender)?;
+    match from_binary(&cw20_msg.msg)? {
+        ReceiveCw20Msg::Deposit { exchange, from } => execute::deposit(
+            deps,
+            sender,
+            Asset::new_cw20(cw20_msg.amount.u128(), info.sender.as_str()),
+            exchange,
+            from,
+        ),
+        ReceiveCw20Msg::AcceptExchange { deposit_id: _ } => unimplemented!(),
     }
 }
 
@@ -60,7 +92,8 @@ mod execute {
 
     pub fn deposit(
         deps: DepsMut,
-        info: MessageInfo,
+        sender: Addr,
+        deposit: Asset,
         exchange: Asset,
         from: Option<String>,
     ) -> Result<Response, ContractError> {
@@ -70,30 +103,20 @@ mod execute {
             None
         };
 
-        let funds = info
-            .funds
-            .first()
-            .cloned()
-            .ok_or(ContractError::NoFundsWithDeposit {})?;
+        let response = Response::new()
+            .add_attribute("execute", "deposit")
+            .add_attribute("sender", sender.to_string())
+            .add_attribute("deposit", deposit.to_string())
+            .add_attribute("exchange", exchange.to_string());
 
-        let deposit = Deposit {
-            deposit: Asset {
-                denom: AssetType::Native(funds.denom.to_string()),
-                amount: funds.amount,
-            },
-            offer: Offer {
-                exchange: exchange.clone(),
-                from,
-            },
+        let offer = Deposit {
+            deposit,
+            offer: Offer { exchange, from },
         };
 
-        add_deposit(deps.storage, &info.sender, &deposit)?;
+        add_deposit(deps.storage, &sender, &offer)?;
 
-        Ok(Response::new()
-            .add_attribute("execute", "deposit")
-            .add_attribute("sender", info.sender.to_string())
-            .add_attribute("deposit", info.funds[0].to_string())
-            .add_attribute("exchange", exchange.to_string()))
+        Ok(response)
     }
 
     pub fn withdraw(
