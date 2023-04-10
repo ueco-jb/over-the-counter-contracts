@@ -1,7 +1,7 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    coins, from_binary, to_binary, Addr, BankMsg, Binary, CosmosMsg, Deps, DepsMut, Env,
+    coins, from_binary, to_binary, Addr, BankMsg, Binary, CosmosMsg, Decimal, Deps, DepsMut, Env,
     MessageInfo, Order, Response, StdResult, WasmMsg,
 };
 use cw2::set_contract_version;
@@ -30,7 +30,7 @@ pub fn instantiate(
         deps.storage,
         &FeeConfig {
             fee_address: deps.api.addr_validate(&msg.fee_address)?,
-            service_fee: msg.optional_service_fee,
+            service_fee: Decimal::percent(1),
         },
     )?;
 

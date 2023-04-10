@@ -1,5 +1,5 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{Addr, Decimal};
+use cosmwasm_std::Addr;
 use cw20::Cw20ReceiveMsg;
 
 use crate::state::{Asset, Deposit, ID};
@@ -7,7 +7,6 @@ use crate::state::{Asset, Deposit, ID};
 #[cw_serde]
 pub struct InstantiateMsg {
     pub fee_address: String,
-    pub optional_service_fee: Decimal,
 }
 
 #[cw_serde]
