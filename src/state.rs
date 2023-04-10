@@ -10,6 +10,19 @@ pub enum AssetType {
     Cw20(String),
 }
 
+impl fmt::Display for AssetType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match &self {
+                AssetType::Native(symbol) => symbol.to_string(),
+                AssetType::Cw20(address) => address.to_string(),
+            }
+        )
+    }
+}
+
 #[cw_serde]
 pub struct Asset {
     pub denom: AssetType,
@@ -34,15 +47,7 @@ impl Asset {
 
 impl fmt::Display for Asset {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}{}",
-            self.amount,
-            match &self.denom {
-                AssetType::Native(symbol) => symbol.to_string(),
-                AssetType::Cw20(address) => format!(":{}", address),
-            }
-        )
+        write!(f, "{}{}", self.amount, self.denom)
     }
 }
 

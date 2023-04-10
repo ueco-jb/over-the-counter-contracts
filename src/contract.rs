@@ -64,7 +64,17 @@ pub fn execute(
         }
         ExecuteMsg::Withdraw { id } => execute::withdraw(deps, info.sender, id),
         ExecuteMsg::AcceptExchange { deposit_id } => {
-            execute::accept_exchange(deps, info, deposit_id)
+            let funds = info
+                .funds
+                .first()
+                .cloned()
+                .ok_or(ContractError::NoFundsWithDeposit {})?;
+            execute::accept_exchange(
+                deps,
+                info.sender,
+                deposit_id,
+                Asset::new_native(funds.amount.u128(), &funds.denom),
+            )
         }
     }
 }
@@ -83,7 +93,12 @@ pub fn receive_cw20(
             exchange,
             from,
         ),
-        ReceiveCw20Msg::AcceptExchange { deposit_id: _ } => unimplemented!(),
+        ReceiveCw20Msg::AcceptExchange { deposit_id } => execute::accept_exchange(
+            deps,
+            sender,
+            deposit_id,
+            Asset::new_cw20(cw20_msg.amount.u128(), info.sender.as_str()),
+        ),
     }
 }
 
@@ -170,54 +185,69 @@ mod execute {
 
     pub fn accept_exchange(
         deps: DepsMut,
-        info: MessageInfo,
+        sender: Addr,
         deposit_id: ID,
+        offer_funds: Asset,
     ) -> Result<Response, ContractError> {
         let DepositByIdResponse {
             sender: deposit_sender,
             deposit,
         } = query::deposit_by_id(deps.as_ref(), deposit_id)?;
 
-        let funds = info
-            .funds
-            .first()
-            .cloned()
-            .ok_or(ContractError::NoNativeForExchange {})?;
-
         let exchange_messages = match deposit.offer.exchange.denom.clone() {
             AssetType::Native(denom) => {
-                if funds.denom == denom {
-                    if funds.amount == deposit.offer.exchange.amount {
+                if offer_funds.denom.to_string() == denom {
+                    if offer_funds.amount == deposit.offer.exchange.amount {
                         // Create two messages
-                        // First sends newly sent native funds to the depositor,
+                        // First sends newly received native funds to the depositor,
                         // second sends original deposit to user that accepted the exchange
                         create_exchange_messages(
                             &deposit_sender,
-                            &Asset::new_native(funds.amount.into(), &funds.denom),
-                            &info.sender,
+                            &offer_funds,
+                            &sender,
                             &deposit.deposit,
                         )?
                     } else {
                         // User sent incorrect amount of native tokens to accept the exchange
                         return Err(ContractError::ExchangeIncorrectAmount {
                             expected_amount: deposit.offer.exchange.amount,
-                            provided_amount: funds.amount,
+                            provided_amount: offer_funds.amount,
                         });
                     }
                 } else {
                     // User sent incorrect native token to the exchange
-                    return Err(ContractError::ExchangeIncorrectNative {
+                    return Err(ContractError::ExchangeIncorrectDenom {
                         expected: denom,
-                        received: funds.denom,
+                        received: offer_funds.denom.to_string(),
                     });
                 }
             }
-            // User send native tokens to accept an exchange which expected CW20 token
-            AssetType::Cw20(expected) => {
-                return Err(ContractError::NativeTokenInsteadOfCw20 {
-                    expected,
-                    received: funds.denom,
-                });
+            AssetType::Cw20(denom) => {
+                if offer_funds.denom.to_string() == denom {
+                    if offer_funds.amount == deposit.offer.exchange.amount {
+                        // Create two messages
+                        // First sends newly received cw20 funds to the depositor,
+                        // second sends original deposit to user that accepted the exchange
+                        create_exchange_messages(
+                            &deposit_sender,
+                            &offer_funds,
+                            &sender,
+                            &deposit.deposit,
+                        )?
+                    } else {
+                        // User sent incorrect amount of cw20 tokens to accept the exchange
+                        return Err(ContractError::ExchangeIncorrectAmount {
+                            expected_amount: deposit.offer.exchange.amount,
+                            provided_amount: offer_funds.amount,
+                        });
+                    }
+                } else {
+                    // User sent incorrect cw20 token to the exchange
+                    return Err(ContractError::ExchangeIncorrectDenom {
+                        expected: denom,
+                        received: offer_funds.denom.to_string(),
+                    });
+                }
             }
         };
 
@@ -227,7 +257,7 @@ mod execute {
             .add_attribute("deposit-sender", deposit_sender.to_string())
             .add_attribute("original-deposit", deposit.deposit.to_string())
             .add_attribute("expected", deposit.offer.exchange.to_string())
-            .add_attribute("accepted-by", info.sender.to_string()))
+            .add_attribute("accepted-by", sender.to_string()))
     }
 
     pub fn create_exchange_messages(
